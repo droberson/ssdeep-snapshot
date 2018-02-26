@@ -31,7 +31,7 @@ TODO:
 - General code cleanup!!
 """
 
-# needs python-ssdeep and python-sqlite
+# needs python-ssdeep, python-magic, and python-sqlite
 
 import os
 import sys
@@ -40,6 +40,8 @@ import socket
 import stat
 import argparse
 import ssdeep
+import hashlib
+import magic
 
 DEFAULT_DIRECTORIES = [
     "/etc",
@@ -99,6 +101,8 @@ def add_db_record(cursor, filename, quiet):
     except OSError as err:
         print "[-] Couldn't open %s: %s" % (absolute, err)
         return False
+
+    # Calculate ssdeep hash
     try:
         fuzzy_hash = ssdeep.hash_from_file(absolute)
     except IOError:
@@ -106,12 +110,33 @@ def add_db_record(cursor, filename, quiet):
     except UnicodeDecodeError:
         fuzzy_hash = "UNICODE DECODE ERROR"
 
+    # Calculate MD5 hash
+    md5hash = hashlib.md5()
+    md5hash.update(open(absolute).read())
+
+    # Calculate SHA1 hash
+    sha1hash = hashlib.sha1()
+    sha1hash.update(open(absolute).read())
+
+    # Determine file type with libmagic
+    filetype = magic.detect_from_filename(absolute).name
+
     if quiet is False:
-        print "[+] Adding %s" % filename
+        print "[+] Adding %s -- %s" % (filename, filetype)
 
     cursor.execute(
-        "INSERT INTO hashes VALUES(?, ?, ?, ?, ?, ?, ?, DATETIME())",
-        (HOSTNAME, absolute, size, perms, owner, group, fuzzy_hash))
+        "INSERT INTO hashes VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME())",
+           (HOSTNAME,
+            absolute,
+            size,
+            perms,
+            owner,
+            group,
+            fuzzy_hash,
+            md5hash.hexdigest(),
+            sha1hash.hexdigest(),
+            filetype))
+
     return True
 
 
@@ -169,12 +194,15 @@ def main():
         print "[-] Exiting."
         return os.EX_USAGE
 
+    # This might be wrong, look into it!
+    con.text_factory = str
+
     # Create schema if it doesn't exist
     cursor = con.cursor()
     cursor.execute(
         "CREATE TABLE IF NOT EXISTS hashes(hostname TEXT, filename TEXT, " + \
-        "size INT, perm INT, uid TEXT, gid TEXT, hash TEXT, " + \
-        "date_added DATEIME)")
+        "size INT, perm INT, uid TEXT, gid TEXT, hash_ssdeep TEXT, " + \
+        "hash_md5 TEXT, hash_sha1 TEXT, filetype TEXT, date_added DATEIME)")
 
     # Walk the supplied directories/filenames
     for directory in directories:
