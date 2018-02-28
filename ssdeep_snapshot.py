@@ -91,6 +91,8 @@ def add_db_record(cursor, filename, quiet):
     """
     docstring
     """
+    skip_hash = False
+
     absolute = os.path.abspath(filename)
     try:
         tempstat = os.stat(absolute)
@@ -102,27 +104,38 @@ def add_db_record(cursor, filename, quiet):
         print "[-] Couldn't open %s: %s" % (absolute, err)
         return False
 
-    # Calculate ssdeep hash
-    try:
-        fuzzy_hash = ssdeep.hash_from_file(absolute)
-    except IOError:
-        fuzzy_hash = "PERMISSION DENIED"
-    except UnicodeDecodeError:
-        fuzzy_hash = "UNICODE DECODE ERROR"
-
-    # Calculate MD5 hash
-    md5hash = hashlib.md5()
-    md5hash.update(open(absolute).read())
-
-    # Calculate SHA1 hash
-    sha1hash = hashlib.sha1()
-    sha1hash.update(open(absolute).read())
+    # Skip hashing if the file is a FIFO, because the script will
+    # just hang forever trying to read data to calculate a hash.
+    if stat.S_ISFIFO(os.stat(absolute).st_mode):
+        skip_hash = True
+        fuzzy_hash = "FIFO"
+        md5digest = "FIFO"
+        sha1digest = "FIFO"
 
     # Determine file type with libmagic
     filetype = magic.detect_from_filename(absolute).name
 
     if quiet is False:
         print "[+] Adding %s -- %s" % (filename, filetype)
+
+    if skip_hash is False:
+        # Calculate ssdeep hash
+        try:
+            fuzzy_hash = ssdeep.hash_from_file(absolute)
+        except IOError:
+            fuzzy_hash = "PERMISSION DENIED"
+        except UnicodeDecodeError:
+            fuzzy_hash = "UNICODE DECODE ERROR"
+
+        # Calculate MD5 hash
+        md5hash = hashlib.md5()
+        md5hash.update(open(absolute).read())
+        md5digest = md5hash.hexdigest()
+
+        # Calculate SHA1 hash
+        sha1hash = hashlib.sha1()
+        sha1hash.update(open(absolute).read())
+        sha1digest = sha1hash.hexdigest()
 
     cursor.execute(
         "INSERT INTO hashes VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME())",
@@ -133,8 +146,8 @@ def add_db_record(cursor, filename, quiet):
             owner,
             group,
             fuzzy_hash,
-            md5hash.hexdigest(),
-            sha1hash.hexdigest(),
+            md5digest,
+            sha1digest,
             filetype))
 
     return True
@@ -154,7 +167,7 @@ def walk_directory(cursor, directory, quiet):
 
     # Walk directory
     for dirname, _, filelist in os.walk(directory):
-        print "[+] Walking %s" % directory
+        print "[+] Walking %s" % dirname
         for filename in filelist:
             fullname = os.path.join(dirname, filename)
             sys.stdout.write("  ")
